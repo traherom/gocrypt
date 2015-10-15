@@ -5,60 +5,38 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/rand"
+	_ "crypto/sha256" // SHA256 needed for HMAC
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
+
+	"github.com/traherom/gocrypt"
 )
 
-import _ "crypto/sha256" // SHA256 needed for HMAC
-
-// Key used for encryption
-type Key []byte
-
-// IV represents an initialization vector for encryption
-type IV []byte
-
-// KeyCombo combines a crypto and authentication key for ease of handling
-type KeyCombo struct {
-	CryptoKey Key
-	AuthKey   Key
-}
-
 // ErrLength represents an issue with input length during decryption
-var ErrLength = errors.New("Ciphertext not complete, length insufficient")
+var ErrLength = &gocrypt.ErrEncryption{Msg: "Ciphertext not complete, length insufficient"}
 
 // ErrHmac indicates that the calculated HMAC did not match the attached
 // HMAC during decryption.
-var ErrHmac = errors.New("HMACs do not match")
+var ErrHmac = &gocrypt.ErrEncryption{Msg: "HMACs do not match"}
 
-// NewKey generates a new random, cryptographically secure Key for use with
+// gocrypt.KeyLength is the length in bytes of the gocrypt.Keys expected by gocrypt/aes's functions
+var KeyLength = aes.BlockSize
+
+// NewKey generates a new random, cryptographically secure gocrypt.Key for use with
 // Encrypt and Decrypt.
-func NewKey() (Key, error) {
-	key := make([]byte, aes.BlockSize)
-	_, err := rand.Read(key)
-	if err != nil {
-		return Key(nil), err
-	}
-
-	return key, nil
+func NewKey() (gocrypt.Key, error) {
+	return gocrypt.SecureBytes(KeyLength)
 }
 
 // newIV generates a new, cryptographically secure IV for use with
-func newIV() (IV, error) {
-	iv := make([]byte, aes.BlockSize)
-	_, err := rand.Read(iv)
-	if err != nil {
-		return nil, err
-	}
-
-	return iv, nil
+func newIV() (gocrypt.IV, error) {
+	return gocrypt.SecureBytes(aes.BlockSize)
 }
 
-// NewKeyCombo produces a crypto/auth key set with new keys. If the keys are
-// already know (ie, decrypting), produce the KeyCombo directly
-func NewKeyCombo() (*KeyCombo, error) {
+// NewKeyCombo produces a crypto/auth gocrypt.Key set with new gocrypt.Keys. If the gocrypt.Keys are
+// already know (ie, decrypting), produce the gocrypt.gocrypt.KeyCombo directly
+func NewKeyCombo() (*gocrypt.KeyCombo, error) {
 	c, err := NewKey()
 	if err != nil {
 		return nil, err
@@ -69,52 +47,60 @@ func NewKeyCombo() (*KeyCombo, error) {
 		return nil, err
 	}
 
-	return &KeyCombo{c, a}, nil
+	return &gocrypt.KeyCombo{c, a}, nil
 }
 
 // Encrypt encrypts the given input stream into the output using AES-OFB with
-// encrypt-then-HMAC. Cipher text includes all data (except the key) needed to
+// encrypt-then-HMAC. Cipher text includes all data (except the gocrypt.Key) needed to
 // decrypt the stream via |Decrypt|.
 //
 // Encrypts the entire plaintext, starting from the current position. To limit
 // reading, use |EncryptLength|.
-func Encrypt(plaintext io.ReadSeeker, ciphertext io.Writer, keys *KeyCombo) (writtenCnt int64, err error) {
+func Encrypt(plaintext io.ReadSeeker, ciphertext io.Writer, keys *gocrypt.KeyCombo) (totalRead int64, writtenCnt int64, err error) {
 	// Determine length of input
 	plainStartPos, err := plaintext.Seek(0, 1)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
+
+	fmt.Println("start", plainStartPos)
 
 	plainLen, err := plaintext.Seek(0, 2)
 	if err != nil {
-		return 0, err
+		// Try to return to where we were. If we fail, we can't do anything with
+		// the error anyway. Return the original one
+		finalPos, _ := plaintext.Seek(plainStartPos, 0)
+		return finalPos - plainStartPos, 0, err
 	}
 
+	plainLen = plainLen - plainStartPos
+	fmt.Println("len", plainLen)
+
 	// TODO handle case where plainStartPos > max int. Probably need to loop out to it
-	_, err = plaintext.Seek(0, int(plainStartPos))
+	_, err = plaintext.Seek(plainStartPos, 0)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	return EncryptLength(plaintext, plainLen, ciphertext, keys)
 }
 
 // EncryptLength encrypts the given input stream into the output using AES-OFB with
-// encrypt-then-HMAC. Cipher text includes all data (except the key) needed to
+// encrypt-then-HMAC. Cipher text includes all data (except the gocrypt.Key) needed to
 // decrypt the stream via |Decrypt|.
 //
 // Reads plainLen characters from the plaintext. If less than plainLen is available,
 // EncryptLength returns an error.
-func EncryptLength(plaintext io.Reader, plainLen int64, ciphertext io.Writer, keys *KeyCombo) (writtenCnt int64, err error) {
+func EncryptLength(plaintext io.Reader, plainLen int64, ciphertext io.Writer, keys *gocrypt.KeyCombo) (totalRead int64, writtenCnt int64, err error) {
 	// Init cipher and hash
-	blockCipher, err := aes.NewCipher(keys.CryptoKey[:])
+	blockCipher, err := aes.NewCipher(keys.CryptoKey)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	iv, err := newIV()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	ofb := cipher.NewOFB(blockCipher, iv)
@@ -133,7 +119,7 @@ func EncryptLength(plaintext io.Reader, plainLen int64, ciphertext io.Writer, ke
 	c, err := ciphertext.Write(lenAsBytes)
 	writtenCnt += int64(c)
 	if err != nil {
-		return writtenCnt, err
+		return 0, writtenCnt, err
 	}
 
 	// IV
@@ -141,20 +127,19 @@ func EncryptLength(plaintext io.Reader, plainLen int64, ciphertext io.Writer, ke
 	c, err = ciphertext.Write(iv)
 	writtenCnt += int64(c)
 	if err != nil {
-		return writtenCnt, err
+		return 0, writtenCnt, err
 	}
 
 	// Encrypted data
 	readBlock := make([]byte, blockCipher.BlockSize())
 	writeBlock := make([]byte, blockCipher.BlockSize())
-	totalRead := int64(0)
 	for {
 		// If we reach the EOF during this read, we still need to write out
 		// the last bit of data, so don't terminate immediately.
 		readCount, err := plaintext.Read(readBlock)
 		totalRead += int64(readCount)
 		if err != nil && err != io.EOF {
-			return writtenCnt, err
+			return totalRead, writtenCnt, err
 		}
 		if readCount == 0 {
 			break
@@ -167,7 +152,7 @@ func EncryptLength(plaintext io.Reader, plainLen int64, ciphertext io.Writer, ke
 		c, err = ciphertext.Write(writeBlock[:readCount])
 		writtenCnt += int64(c)
 		if err != nil {
-			return writtenCnt, err
+			return totalRead, writtenCnt, err
 		}
 
 		// Calc HMAC as we go along, avoiding a second pass
@@ -178,24 +163,24 @@ func EncryptLength(plaintext io.Reader, plainLen int64, ciphertext io.Writer, ke
 	c, err = ciphertext.Write(hash.Sum(nil))
 	writtenCnt += int64(c)
 	if err != nil {
-		return writtenCnt, err
+		return totalRead, writtenCnt, err
 	}
 
 	// Sanity checks
 	if totalRead != plainLen {
-		return writtenCnt, fmt.Errorf("Only able to read %v bytes, expected %v", totalRead, plainLen)
+		return totalRead, writtenCnt, fmt.Errorf("Only able to read %v bytes, expected %v", totalRead, plainLen)
 	}
 	if writtenCnt != totalLen {
 		panic(fmt.Sprintf("Written count (%v) does not match calculated total length (%v). Encrypt is broken.", writtenCnt, totalLen))
 	}
 
-	return writtenCnt, nil
+	return totalRead, writtenCnt, nil
 }
 
 // Decrypt decrypts the given input stream into the output using AES-GCM
-func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *KeyCombo) (writtenCnt int64, err error) {
+func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *gocrypt.KeyCombo) (totalRead int64, writtenCnt int64, err error) {
 	// Init hmac now, because we need to calculated it the entire way
-	hash := hmac.New(crypto.SHA256.New, keys.AuthKey[:])
+	hash := hmac.New(crypto.SHA256.New, keys.AuthKey)
 
 	// Decrypt, calculating hmac as we go to compare at the end
 	// Format of input should be:
@@ -203,15 +188,14 @@ func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *KeyCombo) (written
 	// iv (16 bytes)
 	// encrypted data (... bytes)
 	// hmac ()
-	totalRead := int64(0)
 	lenAsBytes := make([]byte, 8)
 	c, err := ciphertext.Read(lenAsBytes)
 	totalRead += int64(c)
 	if err != nil {
-		return 0, err
+		return totalRead, 0, &gocrypt.ErrEncryption{"unable to read stream length", err}
 	}
 	if c != len(lenAsBytes) {
-		return 0, ErrLength
+		return totalRead, 0, ErrLength
 	}
 
 	totalLen := bytesToInt64(lenAsBytes)
@@ -222,18 +206,18 @@ func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *KeyCombo) (written
 	c, err = ciphertext.Read(iv)
 	totalRead += int64(c)
 	if err != nil {
-		return 0, err
+		return totalRead, 0, &gocrypt.ErrEncryption{"unable to read IV", err}
 	}
 	if c != len(iv) {
-		return 0, ErrLength
+		return totalRead, 0, ErrLength
 	}
 
 	hash.Write(iv)
 
 	// Init cipher now that we have the iv
-	blockCipher, err := aes.NewCipher(keys.CryptoKey[:])
+	blockCipher, err := aes.NewCipher(keys.CryptoKey)
 	if err != nil {
-		return 0, err
+		return totalRead, 0, &gocrypt.ErrEncryption{"unable to init cipher", err}
 	}
 
 	ofb := cipher.NewOFB(blockCipher, iv)
@@ -254,7 +238,7 @@ func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *KeyCombo) (written
 		readCount, err := ciphertext.Read(readBlock[:maxRead])
 		totalRead += int64(readCount)
 		if err != nil && err != io.EOF {
-			return writtenCnt, err
+			return totalRead, writtenCnt, &gocrypt.ErrEncryption{"error reading content", err}
 		}
 		if readCount == 0 {
 			break
@@ -268,7 +252,7 @@ func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *KeyCombo) (written
 		c, err = plaintext.Write(writeBlock[:readCount])
 		writtenCnt += int64(c)
 		if err != nil {
-			return writtenCnt, err
+			return totalRead, writtenCnt, &gocrypt.ErrEncryption{"unable to write decrypted content", err}
 		}
 	}
 
@@ -277,24 +261,24 @@ func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *KeyCombo) (written
 	c, err = ciphertext.Read(attachedHmac)
 	totalRead += int64(c)
 	if err != nil && err != io.EOF {
-		return writtenCnt, err
+		return totalRead, writtenCnt, &gocrypt.ErrEncryption{"unable to read HMAC", err}
 	}
 	if c < len(attachedHmac) {
-		return writtenCnt, ErrLength
+		return totalRead, writtenCnt, ErrLength
 	}
 
 	calcedHmac := hash.Sum(nil)
 
 	if !hmac.Equal(calcedHmac, attachedHmac) {
-		return writtenCnt, ErrHmac
+		return totalRead, writtenCnt, ErrHmac
 	}
 
 	// Final safety check
 	if totalRead < totalLen {
-		return writtenCnt, ErrLength
+		return totalRead, writtenCnt, ErrLength
 	}
 
-	return writtenCnt, nil
+	return totalRead, writtenCnt, nil
 }
 
 // calcCipherLength determines how long the cipher text will be for a given

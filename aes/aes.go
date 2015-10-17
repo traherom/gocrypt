@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	_ "crypto/sha256" // SHA256 needed for HMAC
-	"encoding/binary"
 	"fmt"
 	"io"
 
@@ -47,7 +46,7 @@ func NewKeyCombo() (*gocrypt.KeyCombo, error) {
 		return nil, err
 	}
 
-	return &gocrypt.KeyCombo{c, a}, nil
+	return &gocrypt.KeyCombo{CryptoKey: c, AuthKey: a}, nil
 }
 
 // Encrypt encrypts the given input stream into the output using AES-OFB with
@@ -63,8 +62,6 @@ func Encrypt(plaintext io.ReadSeeker, ciphertext io.Writer, keys *gocrypt.KeyCom
 		return 0, 0, err
 	}
 
-	fmt.Println("start", plainStartPos)
-
 	plainLen, err := plaintext.Seek(0, 2)
 	if err != nil {
 		// Try to return to where we were. If we fail, we can't do anything with
@@ -74,7 +71,6 @@ func Encrypt(plaintext io.ReadSeeker, ciphertext io.Writer, keys *gocrypt.KeyCom
 	}
 
 	plainLen = plainLen - plainStartPos
-	fmt.Println("len", plainLen)
 
 	// TODO handle case where plainStartPos > max int. Probably need to loop out to it
 	_, err = plaintext.Seek(plainStartPos, 0)
@@ -284,16 +280,14 @@ func Decrypt(ciphertext io.Reader, plaintext io.Writer, keys *gocrypt.KeyCombo) 
 // calcCipherLength determines how long the cipher text will be for a given
 // plaintext length in AES-OFB mode
 func calcCipherLength(plainLen int64) int64 {
-	// For AES-OFB, we're truncating immiately after we encrypt everything
+	// For AES-OFB, we're truncating immediately after we encrypt everything
 	return plainLen
 }
 
 func int64ToBytes(u int64) []byte {
-	bytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(bytes, uint64(u))
-	return bytes
+	return gocrypt.Uint64ToBytes(uint64(u))
 }
 
 func bytesToInt64(b []byte) int64 {
-	return int64(binary.BigEndian.Uint64(b))
+	return int64(gocrypt.BytesToUint64(b))
 }

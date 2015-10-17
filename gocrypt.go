@@ -9,9 +9,10 @@ package gocrypt
 
 import (
 	"bytes"
-	"fmt"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/binary"
+	"fmt"
 )
 
 // Key used for encryption
@@ -28,7 +29,7 @@ type KeyCombo struct {
 
 // ErrEncryption is any encryption-related error
 type ErrEncryption struct {
-	Msg string
+	Msg   string
 	Inner error
 }
 
@@ -54,21 +55,44 @@ func SecureBytes(length int) ([]byte, error) {
 
 // Converts a key into a Base64 string, rather than just the straight bytes
 func (k *Key) String() string {
-	return base64.StdEncoding.EncodeToString([]byte(*k))
+	return BytesToB64([]byte(*k))
 }
 
 // KeyFromString converts a base64-encoded string into a Key
 func KeyFromString(str string) (key Key, err error) {
-	key, err = base64.StdEncoding.DecodeString(str)
-	if err != nil {
-		return nil, err
-	}
-
-	return
+	return BytesFromB64(str)
 }
 
 // IsKeyComboEqual returns true if the keys in the given KeyCombos contain
 // the same bytes.
 func IsKeyComboEqual(a, b KeyCombo) bool {
 	return bytes.Equal(a.CryptoKey, b.CryptoKey) && bytes.Equal(a.AuthKey, b.AuthKey)
+}
+
+// Uint64ToBytes returns the bytes of given uint64 in BigEndian format
+func Uint64ToBytes(u uint64) []byte {
+	bytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(bytes, u)
+	return bytes
+}
+
+// BytesToUint64 takes the given bytes, in BigEndian format, and converts them to
+// the corresponding uint64
+func BytesToUint64(b []byte) uint64 {
+	return binary.BigEndian.Uint64(b)
+}
+
+// BytesToB64 returns the given []byte into a base64-encoded string
+func BytesToB64(b []byte) string {
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// BytesFromB64 converts a base64-encoded string into a []byte
+func BytesFromB64(str string) (b []byte, err error) {
+	b, err = base64.StdEncoding.DecodeString(str)
+	if err != nil {
+		return nil, err
+	}
+
+	return
 }

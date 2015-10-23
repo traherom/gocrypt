@@ -15,6 +15,9 @@ import (
 	"fmt"
 )
 
+// Hash holds a cryptographic hash
+type Hash []byte
+
 // Key used for encryption
 type Key []byte
 

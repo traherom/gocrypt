@@ -5,13 +5,15 @@ import (
 	"crypto"
 	"crypto/sha256" // SHA256 will register itself
 	"io"
+
+	"github.com/traherom/gocrypt"
 )
 
 // Size of the hash output in bytes
 var Sha256Size = sha256.Size
 
 // Sha256 hashes the given stream and returns the result.
-func Sha256(r io.Reader) ([]byte, error) {
+func Sha256(r io.Reader) (gocrypt.Hash, error) {
 	h := crypto.SHA256.New()
 
 	block := make([]byte, h.BlockSize())

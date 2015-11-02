@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"crypto/sha256" // SHA256 will register itself
 	"io"
-	"log"
 	"os"
 
 	"github.com/traherom/gocrypt"
@@ -41,6 +40,5 @@ func Sha256File(path string) (gocrypt.Hash, error) {
 	}
 	defer f.Close()
 
-	log.Println("summing", path)
 	return Sha256(f)
 }

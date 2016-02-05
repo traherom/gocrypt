@@ -3,6 +3,7 @@ package hash
 
 import (
 	"crypto"
+	"crypto/hmac"
 	"crypto/sha256" // SHA256 will register itself
 	"io"
 	"os"
@@ -16,20 +17,7 @@ var Sha256Size = sha256.Size
 // Sha256 hashes the given stream and returns the result.
 func Sha256(r io.Reader) (gocrypt.Hash, error) {
 	h := crypto.SHA256.New()
-
-	block := make([]byte, h.BlockSize())
-	for {
-		cnt, err := r.Read(block)
-		h.Write(block[:cnt])
-
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, err
-		}
-	}
-
-	return h.Sum(nil), nil
+	return HashReader(h, r)
 }
 
 // Sha256File opens the given file and returns the SHA256 sum of it
@@ -41,4 +29,9 @@ func Sha256File(path string) (gocrypt.Hash, error) {
 	defer f.Close()
 
 	return Sha256(f)
+}
+
+func Sha256Hmac(msg io.Reader, key gocrypt.Key) (gocrypt.Hash, error) {
+	mac := hmac.New(crypto.SHA256.New, []byte(key))
+	return HashReader(mac, msg)
 }
